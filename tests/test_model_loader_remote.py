@@ -129,14 +129,10 @@ class RemoteSentenceTransformerTest(unittest.TestCase):
         self.assertEqual(arr1.shape, (1, 2))
         self.assertEqual(arr2.shape, (1, 2))
 
-    @patch.dict(
-        os.environ,
-        {
-            "DPR_EMBED_API_TIMEOUT": "45",
-        },
-        clear=False,
-    )
-    def test_load_sentence_transformer_returns_remote_wrapper_with_fixed_key(self):
+    @patch("src.model_loader._DEFAULT_REMOTE_EMBED_API_KEY", "configured-key")
+    @patch("src.model_loader._DEFAULT_REMOTE_EMBED_ENDPOINT", "https://zwwen.online/embed")
+    @patch.dict(os.environ, {"DPR_EMBED_API_TIMEOUT": "45"}, clear=False)
+    def test_load_sentence_transformer_returns_configured_remote_wrapper(self):
         model = load_sentence_transformer("BAAI/bge-small-en-v1.5", device="cpu")
         self.assertTrue(getattr(model, "is_remote", False))
         self.assertEqual(model.model_name, "BAAI/bge-small-en-v1.5")
@@ -144,8 +140,49 @@ class RemoteSentenceTransformerTest(unittest.TestCase):
         self.assertEqual(model.timeout, 45)
         self.assertEqual(
             model.api_key,
-            "26932a86d772001af60cbd9d2c162bfda3a90e094f797f3d6806f6077478b27a",
+            "configured-key",
         )
+
+    @patch("src.model_loader.requests.post")
+    def test_siliconflow_uses_openai_embedding_contract(self, mock_post):
+        response = MagicMock()
+        response.status_code = 200
+        response.raise_for_status.return_value = None
+        response.json.return_value = {
+            "data": [
+                {"object": "embedding", "index": 1, "embedding": [0.0, 5.0]},
+                {"object": "embedding", "index": 0, "embedding": [3.0, 4.0]},
+            ]
+        }
+        mock_post.return_value = response
+
+        model = RemoteSentenceTransformer(
+            model_name="BAAI/bge-small-en-v1.5",
+            endpoint="https://api.siliconflow.cn/v1/embeddings",
+            api_key="silicon-key",
+        )
+        arr = model.encode(["first", "second"])
+
+        self.assertEqual(model.api_format, "openai")
+        self.assertEqual(mock_post.call_args.kwargs["json"], {
+            "model": "BAAI/bge-small-en-v1.5",
+            "input": ["first", "second"],
+            "encoding_format": "float",
+        })
+        np.testing.assert_allclose(
+            arr,
+            np.asarray([[0.6, 0.8], [0.0, 1.0]], dtype=np.float32),
+            atol=1e-6,
+        )
+
+    def test_siliconflow_v1_endpoint_is_completed_to_embeddings(self):
+        model = RemoteSentenceTransformer(
+            model_name="BAAI/bge-small-en-v1.5",
+            endpoint="https://api.siliconflow.cn/v1",
+        )
+
+        self.assertEqual(model.endpoint, "https://api.siliconflow.cn/v1/embeddings")
+        self.assertEqual(model.api_format, "openai")
 
     @patch("src.model_loader._load_local_sentence_transformer")
     def test_load_sentence_transformer_can_force_local(self, mock_load_local):

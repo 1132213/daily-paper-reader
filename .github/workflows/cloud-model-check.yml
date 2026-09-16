@@ -52,8 +52,9 @@ jobs:
         env:
           DPR_MODELS_REMOTE_ONLY: '1'
           DPR_EMBED_ALLOW_LOCAL_FALLBACK: '0'
-          DPR_EMBED_API_URL: ${{ secrets.DPR_EMBED_API_URL || 'https://zwwen.online/embed' }}
+          DPR_EMBED_API_URL: ${{ secrets.DPR_EMBED_API_URL }}
           DPR_EMBED_API_KEY: ${{ secrets.DPR_EMBED_API_KEY }}
+          DPR_EMBED_API_FORMAT: ${{ secrets.DPR_EMBED_API_FORMAT || 'auto' }}
           RERANK_PROFILE: public-zwwen-rerank
           PUBLIC_RERANK_API_BASE_URL: ${{ secrets.PUBLIC_RERANK_API_BASE_URL || 'https://zwwen.online/rerank' }}
           PUBLIC_RERANK_API_KEY: ${{ secrets.PUBLIC_RERANK_API_KEY }}

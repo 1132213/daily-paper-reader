@@ -6,6 +6,7 @@ from contextlib import contextmanager
 import os
 import time
 from typing import Any, Callable, Optional, TYPE_CHECKING
+from urllib.parse import urlparse
 
 import numpy as np
 import requests
@@ -19,9 +20,11 @@ MODELSCOPE_ENDPOINT = "https://modelscope.cn/hf"
 _DEFAULT_RETRIES = 3
 _DEFAULT_HF_BACKOFF_RETRIES = 1
 _DEFAULT_REMOTE_TIMEOUT_SECONDS = 60
-_DEFAULT_REMOTE_EMBED_ENDPOINT = os.getenv("DPR_EMBED_API_URL") or "https://zwwen.online/embed"
-# 当前服务使用固定 API key 接入。
-_DEFAULT_REMOTE_EMBED_API_KEY = os.getenv("DPR_EMBED_API_KEY") or "26932a86d772001af60cbd9d2c162bfda3a90e094f797f3d6806f6077478b27a"
+_DEFAULT_REMOTE_EMBED_ENDPOINT = os.getenv("DPR_EMBED_API_URL", "").strip()
+_DEFAULT_REMOTE_EMBED_API_KEY = os.getenv("DPR_EMBED_API_KEY", "").strip()
+_REMOTE_EMBED_FORMAT_AUTO = "auto"
+_REMOTE_EMBED_FORMAT_LEGACY = "legacy"
+_REMOTE_EMBED_FORMAT_OPENAI = "openai"
 
 
 def _log_default(message: str) -> None:
@@ -61,11 +64,13 @@ class RemoteSentenceTransformer:
       ("huggingface", HUGGINGFACE_ENDPOINT),
       ("modelscope", MODELSCOPE_ENDPOINT),
     ),
+    api_format: str = _REMOTE_EMBED_FORMAT_AUTO,
     allow_local_fallback: bool = False,
     log: Callable[[str], None] = _log_default,
   ):
     self.model_name = model_name
     self.endpoint = self._normalize_endpoint(endpoint)
+    self.api_format = self._resolve_api_format(api_format, self.endpoint)
     self.api_key = str(api_key or "").strip()
     self.timeout = max(int(timeout or _DEFAULT_REMOTE_TIMEOUT_SECONDS), 1)
     self.default_batch_size = max(int(default_batch_size or 1), 1)
@@ -84,9 +89,24 @@ class RemoteSentenceTransformer:
     text = str(endpoint or "").strip().rstrip("/")
     if not text:
       raise ValueError("远程 embedding 服务地址不能为空（DPR_EMBED_API_URL）")
-    if text.endswith("/embed"):
+    if text.endswith(("/embed", "/embeddings")):
       return text
+    parsed = urlparse(text)
+    if parsed.netloc.endswith("siliconflow.cn") and parsed.path.rstrip("/").endswith("/v1"):
+      return f"{text}/embeddings"
     return f"{text}/embed"
+
+  @staticmethod
+  def _resolve_api_format(api_format: str, endpoint: str) -> str:
+    value = str(api_format or _REMOTE_EMBED_FORMAT_AUTO).strip().lower()
+    if value == _REMOTE_EMBED_FORMAT_AUTO:
+      parsed = urlparse(endpoint)
+      if parsed.netloc.endswith("siliconflow.cn") or parsed.path.rstrip("/").endswith("/embeddings"):
+        return _REMOTE_EMBED_FORMAT_OPENAI
+      return _REMOTE_EMBED_FORMAT_LEGACY
+    if value not in {_REMOTE_EMBED_FORMAT_LEGACY, _REMOTE_EMBED_FORMAT_OPENAI}:
+      raise ValueError("DPR_EMBED_API_FORMAT 必须为 auto、legacy 或 openai")
+    return value
 
   def _headers(self) -> dict[str, str]:
     headers = {
@@ -95,6 +115,31 @@ class RemoteSentenceTransformer:
     if self.api_key:
       headers["Authorization"] = f"Bearer {self.api_key}"
     return headers
+
+  def _request_payload(self, texts: list[str]) -> dict[str, Any]:
+    if self.api_format == _REMOTE_EMBED_FORMAT_OPENAI:
+      return {
+        "model": self.model_name,
+        "input": texts,
+        "encoding_format": "float",
+      }
+    return {"texts": texts}
+
+  def _extract_embeddings(self, data: Any) -> list[Any]:
+    if not isinstance(data, dict):
+      raise RuntimeError("远程 embedding 服务返回不是 JSON 对象")
+    if self.api_format == _REMOTE_EMBED_FORMAT_OPENAI:
+      items = data.get("data")
+      if not isinstance(items, list):
+        raise RuntimeError("OpenAI 兼容 embedding 服务返回缺少 data 字段")
+      if all(isinstance(item, dict) and isinstance(item.get("index"), int) for item in items):
+        items = sorted(items, key=lambda item: item["index"])
+      embeddings = [item.get("embedding") if isinstance(item, dict) else None for item in items]
+    else:
+      embeddings = data.get("embeddings")
+    if not isinstance(embeddings, list):
+      raise RuntimeError("远程 embedding 服务返回缺少 embeddings 字段")
+    return embeddings
 
   def _get_local_model(self):
     if remote_models_required():
@@ -196,7 +241,7 @@ class RemoteSentenceTransformer:
         response = requests.post(
           self.endpoint,
           headers=headers,
-          json={"texts": chunk},
+          json=self._request_payload(chunk),
           timeout=self.timeout,
         )
         if response.status_code == 401 and headers.get("Authorization"):
@@ -207,14 +252,12 @@ class RemoteSentenceTransformer:
           response = requests.post(
             self.endpoint,
             headers=headers,
-            json={"texts": chunk},
+            json=self._request_payload(chunk),
             timeout=self.timeout,
           )
         response.raise_for_status()
         data = response.json()
-        embeddings = data.get("embeddings")
-        if not isinstance(embeddings, list):
-          raise RuntimeError("远程 embedding 服务返回缺少 embeddings 字段")
+        embeddings = self._extract_embeddings(data)
         try:
           arr = np.asarray(embeddings, dtype=np.float32)
         except Exception as exc:
@@ -240,7 +283,7 @@ class RemoteSentenceTransformer:
     except Exception as exc:
       if not self.allow_local_fallback:
         raise RuntimeError(
-          f"远程 embedding 请求失败：{exc}。当前默认依赖 zwwen 远程 embedding，"
+          f"远程 embedding 请求失败：{exc}。"
           "不会自动安装/加载本地 Torch 模型；如需本地 fallback，请设置 "
           "DPR_EMBED_ALLOW_LOCAL_FALLBACK=1 并安装 requirements-local-models.txt。"
         ) from exc
@@ -358,6 +401,7 @@ def load_sentence_transformer(
 ):
   remote_endpoint = _DEFAULT_REMOTE_EMBED_ENDPOINT
   remote_api_key = _DEFAULT_REMOTE_EMBED_API_KEY
+  remote_api_format = os.getenv("DPR_EMBED_API_FORMAT", _REMOTE_EMBED_FORMAT_AUTO)
   if remote_models_required() and (not allow_remote or not remote_endpoint):
     raise RuntimeError('云端模型模式需要有效的 DPR_EMBED_API_URL，不允许本地 embedding。')
   if allow_remote and remote_endpoint:
@@ -382,6 +426,7 @@ def load_sentence_transformer(
       local_device=device,
       local_retries=retries,
       local_providers=providers,
+      api_format=remote_api_format,
       allow_local_fallback=is_local_embedding_fallback_enabled(),
       log=log,
     )
