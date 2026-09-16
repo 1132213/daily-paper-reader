@@ -352,9 +352,9 @@ def run_retrieval(plan, config, root):
             "backend": _backend_identity(backend),
             "model": MODEL,
         }
-        # 自定义 embedding 端点必须使任务级召回检查点失效。
+        # 显式配置 zwwen 时复用历史缓存键；其他自定义 endpoint 需要失效检查点。
         endpoint = (os.getenv("DPR_EMBED_API_URL") or "").strip().rstrip("/")
-        if task["lane"] == "embedding" and endpoint:
+        if task["lane"] == "embedding" and endpoint and endpoint != "https://zwwen.online/embed":
             identity["embedding_endpoint"] = endpoint
         key = fingerprint(identity)
         path = cache / "tasks" / (key + ".json")
