@@ -84,9 +84,15 @@ class RemoteSentenceTransformer:
     text = str(endpoint or "").strip().rstrip("/")
     if not text:
       raise ValueError("远程 embedding 服务地址不能为空（DPR_EMBED_API_URL）")
+    if text.endswith("/v1/embeddings") or text.endswith("/embeddings"):
+      return text
     if text.endswith("/embed"):
       return text
     return f"{text}/embed"
+
+  def _uses_openai_embeddings(self) -> bool:
+    endpoint = str(self.endpoint or "").lower()
+    return endpoint.endswith("/v1/embeddings") or endpoint.endswith("/embeddings")
 
   def _headers(self) -> dict[str, str]:
     headers = {
@@ -193,10 +199,15 @@ class RemoteSentenceTransformer:
 
       for chunk_index, chunk in enumerate(chunks, start=1):
         headers = self._headers()
+        payload = (
+          {"model": self.model_name, "input": chunk}
+          if self._uses_openai_embeddings()
+          else {"texts": chunk}
+        )
         response = requests.post(
           self.endpoint,
           headers=headers,
-          json={"texts": chunk},
+          json=payload,
           timeout=self.timeout,
         )
         if response.status_code == 401 and headers.get("Authorization"):
@@ -207,12 +218,22 @@ class RemoteSentenceTransformer:
           response = requests.post(
             self.endpoint,
             headers=headers,
-            json={"texts": chunk},
+            json=payload,
             timeout=self.timeout,
           )
         response.raise_for_status()
         data = response.json()
         embeddings = data.get("embeddings")
+        if not isinstance(embeddings, list):
+          raw_rows = data.get("data")
+          if isinstance(raw_rows, list):
+            extracted = []
+            for row in raw_rows:
+              if not isinstance(row, dict) or not isinstance(row.get("embedding"), list):
+                extracted = []
+                break
+              extracted.append(row["embedding"])
+            embeddings = extracted if extracted else None
         if not isinstance(embeddings, list):
           raise RuntimeError("远程 embedding 服务返回缺少 embeddings 字段")
         try:

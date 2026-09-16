@@ -16,7 +16,7 @@ class ConferenceWorkflowAndUiTest(unittest.TestCase):
         self.assertIn("RERANK_PROFILE", text)
         self.assertIn("RERANK_API_KEY", text)
         self.assertIn("SILICONFLOW_API_KEY", text)
-        self.assertIn('default: "public-zwwen-rerank"', text)
+        self.assertIn('default: "siliconflow-qwen3-0.6b"', text)
         self.assertIn("check_cloud_models.py --require-lightweight", text)
         self.assertNotIn("torch==", text)
 
