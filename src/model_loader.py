@@ -131,10 +131,45 @@ class RemoteSentenceTransformer:
     if self.api_format == _REMOTE_EMBED_FORMAT_OPENAI:
       return {
         "model": self.model_name,
-        "input": texts,
+        # SiliconFlow documents a scalar input for a one-text request.  Its
+        # OpenAI-compatible endpoint also accepts arrays for actual batches.
+        "input": texts[0] if len(texts) == 1 else texts,
         "encoding_format": "float",
       }
     return {"texts": texts}
+
+  @staticmethod
+  def _response_error_detail(response: requests.Response) -> str:
+    """Return a bounded provider error message without including request secrets."""
+    try:
+      payload = response.json()
+    except (ValueError, requests.RequestException):
+      payload = None
+    if isinstance(payload, dict):
+      error = payload.get("error")
+      if isinstance(error, dict):
+        detail = error.get("message") or error.get("detail") or error.get("code")
+      else:
+        detail = error or payload.get("message") or payload.get("detail")
+      if isinstance(detail, str) and detail.strip():
+        return " ".join(detail.split())[:500]
+
+    body = getattr(response, "text", "")
+    if isinstance(body, str) and body.strip():
+      return " ".join(body.split())[:500]
+    return ""
+
+  def _raise_for_status(self, response: requests.Response) -> None:
+    try:
+      response.raise_for_status()
+    except requests.HTTPError as exc:
+      detail = self._response_error_detail(response)
+      if detail:
+        status = getattr(response, "status_code", "unknown")
+        raise RuntimeError(
+          f"远程 embedding 服务返回 HTTP {status}：{detail}"
+        ) from exc
+      raise
 
   def _extract_embeddings(self, data: Any) -> list[Any]:
     if not isinstance(data, dict):
@@ -159,7 +194,7 @@ class RemoteSentenceTransformer:
       reason = self._remote_disabled_reason or "远程 embedding 请求失败"
       raise RuntimeError(
         f"{reason}；当前默认不安装/加载本地 embedding 模型。"
-        "请先检查 zwwen embedding 服务，或设置 DPR_EMBED_ALLOW_LOCAL_FALLBACK=1 "
+        "请先检查远程 embedding 服务，或设置 DPR_EMBED_ALLOW_LOCAL_FALLBACK=1 "
         "并安装 requirements-local-models.txt 后再启用本地 fallback。"
       )
     if self._local_model is None:
@@ -266,7 +301,7 @@ class RemoteSentenceTransformer:
             json=self._request_payload(chunk),
             timeout=self.timeout,
           )
-        response.raise_for_status()
+        self._raise_for_status(response)
         data = response.json()
         embeddings = self._extract_embeddings(data)
         try:

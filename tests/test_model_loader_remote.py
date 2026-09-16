@@ -198,6 +198,42 @@ class RemoteSentenceTransformerTest(unittest.TestCase):
             atol=1e-6,
         )
 
+    @patch("src.model_loader.requests.post")
+    def test_siliconflow_uses_scalar_input_for_one_text(self, mock_post):
+        response = MagicMock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {
+            "data": [{"object": "embedding", "index": 0, "embedding": [3.0, 4.0]}]
+        }
+        mock_post.return_value = response
+
+        model = RemoteSentenceTransformer(
+            model_name="BAAI/bge-small-en-v1.5",
+            endpoint="https://api.siliconflow.cn/v1/embeddings",
+            api_key="silicon-key",
+        )
+        model.encode(["one text"])
+
+        self.assertEqual(mock_post.call_args.kwargs["json"]["input"], "one text")
+
+    @patch("src.model_loader.requests.post")
+    def test_remote_http_error_includes_provider_message(self, mock_post):
+        response = MagicMock()
+        response.status_code = 400
+        response.text = '{"error":{"message":"model is not available"}}'
+        response.json.return_value = {"error": {"message": "model is not available"}}
+        response.raise_for_status.side_effect = requests.HTTPError("400 Client Error", response=response)
+        mock_post.return_value = response
+
+        model = RemoteSentenceTransformer(
+            model_name="BAAI/bge-small-en-v1.5",
+            endpoint="https://api.siliconflow.cn/v1/embeddings",
+            api_key="silicon-key",
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "HTTP 400.*model is not available"):
+            model.encode(["one text"])
+
     def test_siliconflow_v1_endpoint_is_completed_to_embeddings(self):
         model = RemoteSentenceTransformer(
             model_name="BAAI/bge-small-en-v1.5",
