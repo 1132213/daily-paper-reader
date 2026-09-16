@@ -129,9 +129,15 @@ class RemoteSentenceTransformerTest(unittest.TestCase):
         self.assertEqual(arr1.shape, (1, 2))
         self.assertEqual(arr2.shape, (1, 2))
 
-    @patch("src.model_loader._DEFAULT_REMOTE_EMBED_API_KEY", "configured-key")
-    @patch("src.model_loader._DEFAULT_REMOTE_EMBED_ENDPOINT", "https://zwwen.online/embed")
-    @patch.dict(os.environ, {"DPR_EMBED_API_TIMEOUT": "45"}, clear=False)
+    @patch.dict(
+        os.environ,
+        {
+            "DPR_EMBED_API_URL": "https://zwwen.online/embed",
+            "DPR_EMBED_API_KEY": "configured-key",
+            "DPR_EMBED_API_TIMEOUT": "45",
+        },
+        clear=False,
+    )
     def test_load_sentence_transformer_returns_configured_remote_wrapper(self):
         model = load_sentence_transformer("BAAI/bge-small-en-v1.5", device="cpu")
         self.assertTrue(getattr(model, "is_remote", False))
@@ -142,6 +148,23 @@ class RemoteSentenceTransformerTest(unittest.TestCase):
             model.api_key,
             "configured-key",
         )
+
+    @patch.dict(
+        os.environ,
+        {
+            "DPR_EMBED_API_URL": "",
+            "DPR_EMBED_API_KEY": "",
+            "SILICONFLOW_API_KEY": "silicon-key",
+        },
+        clear=False,
+    )
+    def test_load_sentence_transformer_uses_siliconflow_key_when_unconfigured(self):
+        model = load_sentence_transformer("BAAI/bge-small-en-v1.5", device="cpu")
+
+        self.assertTrue(getattr(model, "is_remote", False))
+        self.assertEqual(model.endpoint, "https://api.siliconflow.cn/v1/embeddings")
+        self.assertEqual(model.api_key, "silicon-key")
+        self.assertEqual(model.api_format, "openai")
 
     @patch("src.model_loader.requests.post")
     def test_siliconflow_uses_openai_embedding_contract(self, mock_post):

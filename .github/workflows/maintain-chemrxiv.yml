@@ -31,6 +31,7 @@ jobs:
       DPR_EMBED_ALLOW_LOCAL_FALLBACK: "0"
       DPR_EMBED_API_URL: ${{ secrets.DPR_EMBED_API_URL }}
       DPR_EMBED_API_KEY: ${{ secrets.DPR_EMBED_API_KEY }}
+      SILICONFLOW_API_KEY: ${{ secrets.SILICONFLOW_API_KEY }}
       DPR_EMBED_API_FORMAT: ${{ secrets.DPR_EMBED_API_FORMAT || 'auto' }}
       DPR_EMBED_API_TIMEOUT: "60"
       SUPABASE_URL: https://lyucdwgefyfbmaiopjbk.supabase.co

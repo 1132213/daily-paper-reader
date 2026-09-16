@@ -54,6 +54,7 @@ jobs:
       SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
       DPR_EMBED_API_URL: ${{ secrets.DPR_EMBED_API_URL }}
       DPR_EMBED_API_KEY: ${{ secrets.DPR_EMBED_API_KEY }}
+      SILICONFLOW_API_KEY: ${{ secrets.SILICONFLOW_API_KEY }}
       DPR_EMBED_API_FORMAT: ${{ secrets.DPR_EMBED_API_FORMAT || 'auto' }}
       RERANK_PROFILE: public-zwwen-rerank
       PUBLIC_RERANK_API_BASE_URL: ${{ secrets.PUBLIC_RERANK_API_BASE_URL || 'https://zwwen.online/rerank' }}

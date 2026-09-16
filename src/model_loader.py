@@ -20,8 +20,7 @@ MODELSCOPE_ENDPOINT = "https://modelscope.cn/hf"
 _DEFAULT_RETRIES = 3
 _DEFAULT_HF_BACKOFF_RETRIES = 1
 _DEFAULT_REMOTE_TIMEOUT_SECONDS = 60
-_DEFAULT_REMOTE_EMBED_ENDPOINT = os.getenv("DPR_EMBED_API_URL", "").strip()
-_DEFAULT_REMOTE_EMBED_API_KEY = os.getenv("DPR_EMBED_API_KEY", "").strip()
+_SILICONFLOW_EMBED_ENDPOINT = "https://api.siliconflow.cn/v1/embeddings"
 _REMOTE_EMBED_FORMAT_AUTO = "auto"
 _REMOTE_EMBED_FORMAT_LEGACY = "legacy"
 _REMOTE_EMBED_FORMAT_OPENAI = "openai"
@@ -31,8 +30,20 @@ def _log_default(message: str) -> None:
   print(message, flush=True)
 
 
+def _remote_embedding_config() -> tuple[str, str]:
+  """Resolve the configured embedding endpoint without a public-service fallback."""
+  endpoint = str(os.getenv("DPR_EMBED_API_URL") or "").strip()
+  api_key = str(os.getenv("DPR_EMBED_API_KEY") or "").strip()
+  siliconflow_api_key = str(os.getenv("SILICONFLOW_API_KEY") or "").strip()
+  if not endpoint and siliconflow_api_key:
+    endpoint = _SILICONFLOW_EMBED_ENDPOINT
+  if not api_key and siliconflow_api_key:
+    api_key = siliconflow_api_key
+  return endpoint, api_key
+
+
 def is_remote_embedding_enabled() -> bool:
-  return bool(str(_DEFAULT_REMOTE_EMBED_ENDPOINT or "").strip())
+  return bool(_remote_embedding_config()[0])
 
 
 def remote_models_required() -> bool:
@@ -399,8 +410,7 @@ def load_sentence_transformer(
     ("modelscope", MODELSCOPE_ENDPOINT),
   ),
 ):
-  remote_endpoint = _DEFAULT_REMOTE_EMBED_ENDPOINT
-  remote_api_key = _DEFAULT_REMOTE_EMBED_API_KEY
+  remote_endpoint, remote_api_key = _remote_embedding_config()
   remote_api_format = os.getenv("DPR_EMBED_API_FORMAT", _REMOTE_EMBED_FORMAT_AUTO)
   if remote_models_required() and (not allow_remote or not remote_endpoint):
     raise RuntimeError('云端模型模式需要有效的 DPR_EMBED_API_URL，不允许本地 embedding。')
