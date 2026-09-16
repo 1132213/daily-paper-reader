@@ -129,6 +129,45 @@ class RemoteSentenceTransformerTest(unittest.TestCase):
         self.assertEqual(arr1.shape, (1, 2))
         self.assertEqual(arr2.shape, (1, 2))
 
+    @patch("src.model_loader.requests.post")
+    def test_remote_encode_supports_openai_embeddings_shape(self, mock_post):
+        resp = MagicMock()
+        resp.raise_for_status.return_value = None
+        resp.json.return_value = {
+            "data": [
+                {"embedding": [3.0, 4.0]},
+                {"embedding": [0.0, 5.0]},
+            ]
+        }
+        mock_post.return_value = resp
+
+        model = RemoteSentenceTransformer(
+            model_name="BAAI/bge-small-en-v1.5",
+            endpoint="https://api.siliconflow.cn/v1/embeddings",
+            api_key="test-key",
+            timeout=30,
+            default_batch_size=2,
+        )
+        arr = model.encode(["a", "b"], convert_to_numpy=True, normalize_embeddings=True, batch_size=2)
+
+        self.assertEqual(arr.shape, (2, 2))
+        np.testing.assert_allclose(arr[0], np.asarray([0.6, 0.8], dtype=np.float32), atol=1e-6)
+        np.testing.assert_allclose(arr[1], np.asarray([0.0, 1.0], dtype=np.float32), atol=1e-6)
+        self.assertEqual(
+            mock_post.call_args.kwargs["json"],
+            {"model": "BAAI/bge-small-en-v1.5", "input": ["a", "b"]},
+        )
+
+    def test_remote_endpoint_normalization_keeps_embeddings_path(self):
+        model = RemoteSentenceTransformer(
+            model_name="BAAI/bge-small-en-v1.5",
+            endpoint="https://api.siliconflow.cn/v1/embeddings/",
+            api_key="test-key",
+            timeout=30,
+            default_batch_size=2,
+        )
+        self.assertEqual(model.endpoint, "https://api.siliconflow.cn/v1/embeddings")
+
     @patch.dict(
         os.environ,
         {
